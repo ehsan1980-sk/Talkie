@@ -1,7 +1,8 @@
 Talkie
 ======
 
-Speech library for Arduino
+Speech library for Arduino, forked from going-digital's mind-boggling original. This version adds asynchronous (non-blocking) playback, support for Microchip audio DAC on the Adafruit Wave Shield, and moves the synthesizer coefficients to PROGMEM. Caveats regarding pin and timer usage still apply; please read through, not all board types are supported.
+
 
 Quick start
 -----------
@@ -26,6 +27,29 @@ Talkie comes with over 1000 words of speech data that can be included in your pr
 How to use the library
 ----------------------
 See the examples. Any commented data lines in the examples can be un-commented and used. Note that some speech libraries come with word endings such as '-S', '-Z', '-TEEN' that can be used to increase vocabulary.
+
+**To use the Wave Shield DAC,** change the constructor from:
+```
+Talkie voice;
+```
+to:
+```
+Talkie voice(2,3,4);
+```
+where (2,3,4) are the pin numbers of the DAC chip select, clock and data pins, respectively (2, 3 and 4 are the usual default wiring on the Wave Shield).
+
+**For asynchronous (non-blocking) playback,** change the say() call from:
+```
+voice.say(spDANGER);
+```
+to:
+```
+voice.say(spDANGER, false);
+```
+the talking() method can then be polled; this returns true during speech playback, false when done. A simple while statement waits for the last-issued phrase to complete:
+```
+while(voice.talking());
+```
 
 Word dictionaries
 -----------------

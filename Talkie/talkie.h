@@ -5,25 +5,14 @@
 #ifndef _Talkie_h_
 #define _Talkie_h_
 
-#include <inttypes.h>
-#include <avr/io.h>
+#include <Arduino.h>
 
-
-class Talkie
-{
-	public:
-		void say(uint8_t* address);
-		uint8_t* ptrAddr;
-		uint8_t ptrBit;
-	private:
-		// Setup
-		uint8_t setup;
-		
-		// Bitstream parser
-		void setPtr(uint8_t* addr);
-		uint8_t rev(uint8_t a);
-		uint8_t getBits(uint8_t bits);
+class Talkie {
+  public:
+	Talkie(void);                                 // PWM
+	Talkie(uint8_t cs, uint8_t clk, uint8_t dat); // DAC
+	void    say(uint8_t *address, boolean block=true);
+	boolean talking(void); // Poll this when block=false
 };
-
 
 #endif
