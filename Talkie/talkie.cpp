@@ -2,6 +2,10 @@
 // Copyright 2011 Peter Knight
 // This code is released under GPLv2 license.
 
+// Though the Wave Shield DAC pins are configurable, much else in this code
+// is still very Uno-specific; the timers and timer control registers, the
+// PWM output pin, etc.  Compatibility with other boards is not guaranteed.
+
 #include "talkie.h"
 
 #define FS    8000      // Speech engine sample rate
@@ -69,10 +73,6 @@ static const uint8_t PROGMEM
                  0x5C,0x5F,0x63,0x66,0x6A,0x6E,0x73,0x77,
                  0x7B,0x80,0x85,0x8A,0x8F,0x95,0x9A,0xA0};
 
-// Though the Wave Shield DAC pins are configurable, much else in this code
-// is still very Uno-specific; the timers and timer control registers, the
-// PWM output pin, etc.  Compatibility with other boards is not guaranteed.
-
 // Constructor for PWM mode
 Talkie::Talkie(void) {
 	pinMode(3, OUTPUT); // OC2B
@@ -94,44 +94,12 @@ Talkie::Talkie(uint8_t cs, uint8_t clk, uint8_t dat) {
 	*clkPort  &= ~clkBitMask; // Clock low
 }
 
-static inline uint8_t rev(uint8_t a) { // Reverse bit sequence in 8-bit value
-	a = ( a         >> 4) | ( a         << 4); // 76543210 -> 32107654
-	a = ((a & 0xCC) >> 2) | ((a & 0x33) << 2); // 32107654 -> 10325476
-	a = ((a & 0xAA) >> 1) | ((a & 0x55) << 1); // 10325476 -> 01234567
-	return a;
-}
-
-static uint8_t getBits(uint8_t bits) {
-	uint8_t value;
-	if(bits > bufBits) {
-		buf     |= rev(pgm_read_byte(ptrAddr)) << (8 - bufBits);
-		bufBits += 8;
-		ptrAddr++; // Don't post-inc in pgm_read_byte! Is a macro.
-	}
-	value    = buf >> (16 - bits);
-	buf    <<= bits;
-	bufBits -= bits;
-	return value;
-}
-
-static inline int8_t read8(const int8_t *base, uint8_t bits) {
-	return pgm_read_byte(&base[getBits(bits)]);
-}
-
-static inline int16_t read16(const int16_t *base, uint8_t bits) {
-	return pgm_read_word(&base[getBits(bits)]);
-}
-
-boolean Talkie::talking(void) {
-	return TIMSK1 & _BV(OCIE1A);
-}
-
 void Talkie::say(uint8_t *addr, boolean block) {
 
 	// Enable the speech system whenever say() is called.
 
 	if(!csBitMask) {
-		// Set up Timer2 for 8-bit, 62500 Hz PWM on OC2B.
+		// Set up Timer2 for 8-bit, 62500 Hz PWM on OC2B
 		TCCR2A = _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
 		TCCR2B = _BV(CS20); // No prescale
 		TIMSK2 = 0;         // No interrupt
@@ -152,6 +120,30 @@ void Talkie::say(uint8_t *addr, boolean block) {
 	TIMSK1 = _BV(OCIE1A);                   // Compare match interrupt on
 
 	if(block) while(TIMSK1 & _BV(OCIE1A));
+}
+
+boolean Talkie::talking(void) {
+	return TIMSK1 & _BV(OCIE1A);
+}
+
+static inline uint8_t rev(uint8_t a) { // Reverse bit sequence in 8-bit value
+	a = ( a         >> 4) | ( a         << 4); // 76543210 -> 32107654
+	a = ((a & 0xCC) >> 2) | ((a & 0x33) << 2); // 32107654 -> 10325476
+	a = ((a & 0xAA) >> 1) | ((a & 0x55) << 1); // 10325476 -> 01234567
+	return a;
+}
+
+static uint8_t getBits(uint8_t bits) {
+	uint8_t value;
+	if(bits > bufBits) {
+		buf     |= rev(pgm_read_byte(ptrAddr)) << (8 - bufBits);
+		bufBits += 8;
+		ptrAddr++; // Don't post-inc in pgm_read_byte! Is a macro.
+	}
+	value    = buf >> (16 - bits);
+	buf    <<= bits;
+	bufBits -= bits;
+	return value;
 }
 
 static void dacOut(uint8_t value) {
@@ -181,6 +173,9 @@ static void dacOut(uint8_t value) {
 	}
 	*csPort  |=  csBitMask; // Unselect DAC
 }
+
+#define read8(base, bits)  pgm_read_byte(&base[getBits(bits)]);
+#define read16(base, bits) pgm_read_word(&base[getBits(bits)]);
 
 ISR(TIMER1_COMPA_vect) {
 	int16_t u0;
