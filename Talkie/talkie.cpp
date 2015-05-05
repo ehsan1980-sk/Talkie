@@ -8,6 +8,8 @@
 
 #include "talkie.h"
 
+//#define PIEZO         // If set, connect piezo on pins 3 & 11, is louder
+
 #define FS    8000      // Speech engine sample rate
 #define TICKS (FS / 40) // Speech data rate
 
@@ -75,8 +77,11 @@ static const uint8_t PROGMEM
 
 // Constructor for PWM mode
 Talkie::Talkie(void) {
-	pinMode(3, OUTPUT); // OC2B
-	csBitMask = 0;      // DAC not in use
+	pinMode(3, OUTPUT);  // OC2B
+#ifdef PIEZO
+	pinMode(11, OUTPUT); // OC2A
+#endif
+	csBitMask = 0;       // DAC not in use
 }
 
 // Constructor for DAC mode
@@ -100,10 +105,14 @@ void Talkie::say(uint8_t *addr, boolean block) {
 
 	if(!csBitMask) {
 		// Set up Timer2 for 8-bit, 62500 Hz PWM on OC2B
-		TCCR2A = _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
-		TCCR2B = _BV(CS20); // No prescale
-		TIMSK2 = 0;         // No interrupt
-		OCR2B  = 0x80;      // 50% duty cycle
+		TCCR2A  = _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
+		TCCR2B  = _BV(CS20); // No prescale
+		TIMSK2  = 0;         // No interrupt
+		OCR2B   = 0x80;      // 50% duty cycle
+#ifdef PIEZO
+		OCR2A   = 0x80;
+		TCCR2A |= _BV(COM2A1) | _BV(COM2A0); // OC2A inverting mode
+#endif
 	}
 
 	// Reset synth state and 'ROM' reader
@@ -181,7 +190,11 @@ ISR(TIMER1_COMPA_vect) {
 	int16_t u0;
 
 	if(csBitMask) dacOut(nextPwm);
+#ifdef PIEZO
+	else          OCR2A = OCR2B = nextPwm;
+#else
 	else          OCR2B = nextPwm;
+#endif
 
 	if(++interruptCount >= TICKS) {
 		// Read speech data, processing the variable size frames
