@@ -30,8 +30,9 @@ static volatile int8_t   synthK3, synthK4, synthK5, synthK6,
 static uint16_t          buf, synthRand = 1;
 static int16_t           x0, x1, x2, x3, x4, x5, x6, x7, x8, x9;
 static uint8_t           periodCounter, nextPwm = 0x80,
-                         synthPeriod, bufBits, *ptrAddr,
+                         synthPeriod, bufBits,
                          csBitMask, clkBitMask, datBitMask;
+static const uint8_t     *ptrAddr;
 
 static const int16_t PROGMEM
   tmsK1[]     = {0x82C0,0x8380,0x83C0,0x8440,0x84C0,0x8540,0x8600,0x8780,
@@ -99,7 +100,7 @@ Talkie::Talkie(uint8_t cs, uint8_t clk, uint8_t dat) {
 	*clkPort  &= ~clkBitMask; // Clock low
 }
 
-void Talkie::say(uint8_t *addr, boolean block) {
+void Talkie::say(const uint8_t *addr, boolean block) {
 
 	// Enable the speech system whenever say() is called.
 
