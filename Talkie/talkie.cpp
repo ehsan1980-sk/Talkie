@@ -105,6 +105,17 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 	// Enable the speech system whenever say() is called.
 
 	if(!csBitMask) {
+#if defined(__AVR_ATmega32U4__)
+		// Set up Timer4 for fast PWM on !OC4A
+		TCCR4A = _BV(COM4A0) | _BV(PWM4A); // Clear on match, PWMA on
+		TCCR4B = _BV(PWM4X)  |_BV(CS40);   // PWM invert, 1:1 prescale
+		TCCR4D = 0;                        // Fast PWM mode
+		TCCR4E = 0;                        // Not enhanced mode
+		TC4H   = 0;                        // Not 10-bit mode
+		DT4    = 0;                        // No dead time
+		OCR4C  = 255;                      // TOP
+		OCR4A  = 127;                      // 50% duty to start
+#else
 		// Set up Timer2 for 8-bit, 62500 Hz PWM on OC2B
 		TCCR2A  = _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
 		TCCR2B  = _BV(CS20); // No prescale
@@ -113,6 +124,7 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 #ifdef PIEZO
 		OCR2A   = 0x80;
 		TCCR2A |= _BV(COM2A1) | _BV(COM2A0); // OC2A inverting mode
+#endif
 #endif
 	}
 
@@ -191,10 +203,14 @@ ISR(TIMER1_COMPA_vect) {
 	int16_t u0;
 
 	if(csBitMask) dacOut(nextPwm);
+#if defined(__AVR_ATmega32U4__)
+	else          OCR4A = nextPwm;
+#else
 #ifdef PIEZO
 	else          OCR2A = OCR2B = nextPwm;
 #else
 	else          OCR2B = nextPwm;
+#endif
 #endif
 
 	if(++interruptCount >= TICKS) {
@@ -205,8 +221,16 @@ ISR(TIMER1_COMPA_vect) {
 		} else if(energy == 0xF) {        // Stop frame; silence
 			TIMSK1 &= ~_BV(OCIE1A);   // Stop interrupt
 			nextPwm = 0x80;           // Neutral
-			if(csBitMask) dacOut(nextPwm);
-			else          TCCR2A = 0; // Stop PWM out
+			if(csBitMask) {
+				dacOut(nextPwm);
+			} else {
+				// Stop PWM out:
+#if defined(__AVR_ATmega32U4__)
+				TCCR4A = 0;
+#else
+				TCCR2A = 0;
+#endif
+			}
 			return;
 		} else {
 			synthEnergy    = pgm_read_byte(&tmsEnergy[energy]);
