@@ -78,7 +78,11 @@ static const uint8_t PROGMEM
 
 // Constructor for PWM mode
 Talkie::Talkie(void) {
+#if defined(__AVR_ATmega32U4__)
+	pinMode(5, OUTPUT);  // !OC4A
+#else
 	pinMode(3, OUTPUT);  // OC2B
+#endif
 #ifdef PIEZO
 	pinMode(11, OUTPUT); // OC2A
 #endif
