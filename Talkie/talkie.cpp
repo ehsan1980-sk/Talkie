@@ -111,6 +111,7 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 	if(!csBitMask) {
 #if defined(__AVR_ATmega32U4__)
 		// Set up Timer4 for fast PWM on !OC4A
+		PLLFRQ = (PLLFRQ & 0xCF) | 0x30;   // Route PLL to async clk
 		TCCR4A = _BV(COM4A0) | _BV(PWM4A); // Clear on match, PWMA on
 		TCCR4B = _BV(PWM4X)  |_BV(CS40);   // PWM invert, 1:1 prescale
 		TCCR4D = 0;                        // Fast PWM mode
