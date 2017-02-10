@@ -8,7 +8,16 @@
 
 #include "talkie.h"
 
-//#define PIEZO         // If set, connect piezo on pins 3 & 11, is louder
+#if defined(__SAMD21G18A__) || defined(__SAMD21E18A__) || defined(__SAMD21J18A__)
+ #define __SAMD__
+ #define TIMER       TC4
+ #define IRQN        TC4_IRQn
+ #define IRQ_HANDLER TC4_Handler
+ #define PORTTYPE    uint32_t
+#else
+ #define PORTTYPE    uint8_t
+//#define PIEZO      // If set, connect piezo on pins 3 & 11, is louder
+#endif
 
 #define FS    8000      // Speech engine sample rate
 #define TICKS (FS / 40) // Speech data rate
@@ -18,21 +27,25 @@
 // in multiple instances; there can be only one.  So they're declared as
 // static here to keep the header simple and self-documenting.
 #if TICKS < 255
-static volatile uint8_t  interruptCount;
+static volatile uint8_t   interruptCount;
 #else
-static volatile uint16_t interruptCount;
+static volatile uint16_t  interruptCount;
 #endif
-static volatile uint8_t  *csPort, *clkPort, *datPort;
-static volatile uint16_t synthEnergy;
-static volatile int16_t  synthK1, synthK2;
-static volatile int8_t   synthK3, synthK4, synthK5, synthK6,
-                         synthK7, synthK8, synthK9, synthK10;
-static uint16_t          buf, synthRand = 1;
-static int16_t           x0, x1, x2, x3, x4, x5, x6, x7, x8, x9;
-static uint8_t           periodCounter, nextPwm = 0x80,
-                         synthPeriod, bufBits,
-                         csBitMask, clkBitMask, datBitMask;
+static volatile PORTTYPE *csPort, *clkPort, *datPort;
+static volatile uint16_t  synthEnergy;
+static volatile int16_t   synthK1, synthK2;
+static volatile int8_t    synthK3, synthK4, synthK5, synthK6,
+                          synthK7, synthK8, synthK9, synthK10;
+static uint16_t           buf, synthRand = 1;
+static int16_t            x0, x1, x2, x3, x4, x5, x6, x7, x8, x9;
+static uint8_t            periodCounter, synthPeriod, bufBits;
+static PORTTYPE           csBitMask, clkBitMask, datBitMask;
 static const uint8_t     *ptrAddr;
+#ifdef __SAMD__
+static uint16_t           nextPwm = 0x200; // 10-bit PWM
+#else
+static uint8_t            nextPwm = 0x80;  // 8-bit PWM
+#endif
 
 static const int16_t PROGMEM
   tmsK1[]     = {0x82C0,0x8380,0x83C0,0x8440,0x84C0,0x8540,0x8600,0x8780,
@@ -78,13 +91,15 @@ static const uint8_t PROGMEM
 
 // Constructor for PWM mode
 Talkie::Talkie(void) {
-#if defined(__AVR_ATmega32U4__)
+#ifdef __SAMD__
+	analogWriteResolution(10);
+#elif defined(__AVR_ATmega32U4__) // Circuit Playground
 	pinMode(5, OUTPUT);  // !OC4A
-#else
+#else // Arduino Uno
 	pinMode(3, OUTPUT);  // OC2B
-#endif
-#ifdef PIEZO
+ #ifdef PIEZO
 	pinMode(11, OUTPUT); // OC2A
+ #endif
 #endif
 	csBitMask = 0;       // DAC not in use
 }
@@ -120,17 +135,18 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 		DT4    = 0;                        // No dead time
 		OCR4C  = 255;                      // TOP
 		OCR4A  = 127;                      // 50% duty to start
-#else
+#elif defined(__AVR__)
 		// Set up Timer2 for 8-bit, 62500 Hz PWM on OC2B
 		TCCR2A  = _BV(COM2B1) | _BV(WGM21) | _BV(WGM20);
 		TCCR2B  = _BV(CS20); // No prescale
 		TIMSK2  = 0;         // No interrupt
 		OCR2B   = 0x80;      // 50% duty cycle
-#ifdef PIEZO
+ #ifdef PIEZO
 		OCR2A   = 0x80;
 		TCCR2A |= _BV(COM2A1) | _BV(COM2A0); // OC2A inverting mode
-#endif
-#endif
+ #endif // endif PIEZO
+#endif // endif AVR
+		// SAMD uses onboard DAC; no init needed here
 	}
 
 	// Reset synth state and 'ROM' reader
@@ -138,6 +154,44 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 	  periodCounter = buf = bufBits = 0;
 	ptrAddr        = addr;
 	interruptCount = TICKS;
+
+#ifdef __SAMD__
+
+	// Enable GCLK for TC4 and COUNTER (timer counter input clock)
+	GCLK->CLKCTRL.reg = (uint16_t)(GCLK_CLKCTRL_CLKEN |
+	  GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_TC4_TC5));
+	while(GCLK->STATUS.bit.SYNCBUSY == 1);
+
+	// Counter must first be disabled to configure it
+	TIMER->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
+	while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+
+	TIMER->COUNT16.CTRLA.reg =  // Configure timer counter
+	  TC_CTRLA_PRESCALER_DIV1 | // 1:1 Prescale
+	  TC_CTRLA_WAVEGEN_MFRQ   | // Match frequency generation mode (MFRQ)
+	  TC_CTRLA_MODE_COUNT16;    // 16-bit counter mode
+	while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+
+	TIMER->COUNT16.CTRLBCLR.reg = TCC_CTRLBCLR_DIR; // Count up
+	while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+
+	TIMER->COUNT16.CC[0].reg = ((F_CPU + (FS / 2)) / FS) - 1;
+	while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+
+	TIMER->COUNT16.INTENSET.reg = TC_INTENSET_OVF; // Overflow interrupt
+
+	NVIC_DisableIRQ(IRQN);
+	NVIC_ClearPendingIRQ(IRQN);
+	NVIC_SetPriority(IRQN, 0); // Top priority
+	NVIC_EnableIRQ(IRQN);
+
+	// Enable TCx
+	TIMER->COUNT16.CTRLA.reg |= TC_CTRLA_ENABLE;
+	while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+
+	if(block) while(!(TIMER->COUNT16.STATUS.reg & TC_STATUS_STOP));
+
+#else // AVR
 
 	// Set up Timer1 to trigger periodic synth calc at 'FS' Hz
 	TCCR1A = 0;                             // No output
@@ -147,10 +201,16 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 	TIMSK1 = _BV(OCIE1A);                   // Compare match interrupt on
 
 	if(block) while(TIMSK1 & _BV(OCIE1A));
+
+#endif // AVR
 }
 
 boolean Talkie::talking(void) {
+#ifdef __SAMD__
+	return !(TIMER->COUNT16.STATUS.reg & TC_STATUS_STOP);
+#else
 	return TIMSK1 & _BV(OCIE1A);
+#endif
 }
 
 static inline uint8_t rev(uint8_t a) { // Reverse bit sequence in 8-bit value
@@ -204,19 +264,29 @@ static void dacOut(uint8_t value) {
 #define read8(base, bits)  pgm_read_byte(&base[getBits(bits)]);
 #define read16(base, bits) pgm_read_word(&base[getBits(bits)]);
 
+#ifdef __SAMD__
+void IRQ_HANDLER() {
+	TIMER->COUNT16.INTFLAG.reg = TC_INTFLAG_OVF;
+#else
 ISR(TIMER1_COMPA_vect) {
+#endif
 	int16_t u0;
 
-	if(csBitMask) dacOut(nextPwm);
-#if defined(__AVR_ATmega32U4__)
-	else          OCR4A = nextPwm;
-#else
-#ifdef PIEZO
-	else          OCR2A = OCR2B = nextPwm;
-#else
-	else          OCR2B = nextPwm;
-#endif
-#endif
+	if(csBitMask) {
+		dacOut(nextPwm);
+	} else {
+#ifdef __SAMD__
+		analogWrite(A0, nextPwm);
+#elif defined(__AVR_ATmega32U4__) // Circuit Playground
+		OCR4A = nextPwm;
+#else // Uno
+ #ifdef PIEZO
+		OCR2A = OCR2B = nextPwm;
+ #else
+		OCR2B = nextPwm;
+ #endif // endif PIEZO
+#endif // endif Uno
+	}
 
 	if(++interruptCount >= TICKS) {
 		// Read speech data, processing the variable size frames
@@ -224,13 +294,22 @@ ISR(TIMER1_COMPA_vect) {
 		if((energy = getBits(4)) == 0) {  // Rest frame
 			synthEnergy = 0;
 		} else if(energy == 0xF) {        // Stop frame; silence
+#ifdef __SAMD__
+			// Disable timer/counter
+			TIMER->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
+			while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+			nextPwm = 0x200;          // Neutral
+#else
 			TIMSK1 &= ~_BV(OCIE1A);   // Stop interrupt
 			nextPwm = 0x80;           // Neutral
+#endif
 			if(csBitMask) {
 				dacOut(nextPwm);
 			} else {
-				// Stop PWM out:
-#if defined(__AVR_ATmega32U4__)
+				// Stop PWM/DAC out:
+#ifdef __SAMD__
+				analogWrite(A0, nextPwm);
+#elif defined(__AVR_ATmega32U4__)
 				TCCR4A = 0;
 #else
 				TCCR2A = 0;
@@ -292,5 +371,9 @@ ISR(TIMER1_COMPA_vect) {
 	else if(u0 < -512) u0 = -512;
 
 	x0      =  u0;
-	nextPwm = (u0 >> 2) + 0x80;
+#ifdef __SAMD__
+	nextPwm = u0 + 0x200; // 10-bit
+#else
+	nextPwm = (u0 >> 2) + 0x80; // 8-bit
+#endif
 }
