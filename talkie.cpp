@@ -8,7 +8,7 @@
 
 #include "talkie.h"
 
-#if defined(__SAMD21G18A__) || defined(__SAMD21E18A__) || defined(__SAMD21J18A__)
+#if defined(__SAMD21G18A__) || defined(__SAMD21E18A__) || defined(__SAMD21J18A__) || defined(_SAMD21_) || defined(__SAMD51__)
  #define __SAMD__
  #define TIMER       TC4
  #define IRQN        TC4_IRQn
@@ -157,6 +157,49 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 
 #ifdef __SAMD__
 
+ #if defined(__SAMD51__)
+        // Feed TIMER off GCLK1 (already set to 48 MHz by Arduino core)
+	GCLK->PCHCTRL[TC4_GCLK_ID].bit.CHEN = 0;
+	while(GCLK->PCHCTRL[TC4_GCLK_ID].bit.CHEN); // Wait for disable
+	GCLK_PCHCTRL_Type pchctrl;
+	pchctrl.bit.GEN                = GCLK_PCHCTRL_GEN_GCLK1_Val;
+	pchctrl.bit.CHEN               = 1;
+	GCLK->PCHCTRL[TC4_GCLK_ID].reg = pchctrl.reg;
+	while(!GCLK->PCHCTRL[TC4_GCLK_ID].bit.CHEN); // Wait for enable
+
+	// Disable timer before configuring it
+	TIMER->COUNT16.CTRLA.bit.ENABLE = 0;
+	while(TIMER->COUNT16.SYNCBUSY.bit.ENABLE);
+
+	TIMER->COUNT16.CTRLA.bit.MODE =
+	  TC_CTRLA_MODE_COUNT16; // 16-bit counter mode
+
+	TIMER->COUNT16.CTRLA.bit.PRESCALER =
+	  TC_CTRLA_PRESCALER_DIV1_Val; // 1:1 Prescale
+
+	TIMER->COUNT16.WAVE.bit.WAVEGEN =
+	  TC_WAVE_WAVEGEN_MFRQ_Val; // Match frequency generation mode (MFRQ)
+
+        TIMER->COUNT16.CTRLBCLR.reg = TC_CTRLBCLR_DIR; // Count up
+        while(TIMER->COUNT16.SYNCBUSY.bit.CTRLB);
+
+        TIMER->COUNT16.CC[0].reg = ((48000000 + (FS / 2)) / FS) - 1;
+	while(TIMER->COUNT16.SYNCBUSY.bit.CC0);
+
+        TIMER->COUNT16.INTENSET.reg = TC_INTENSET_OVF; // Overflow interrupt
+
+        NVIC_DisableIRQ(IRQN);
+        NVIC_ClearPendingIRQ(IRQN);
+        NVIC_SetPriority(IRQN, 0); // Top priority
+        NVIC_EnableIRQ(IRQN);
+
+        // Enable TCx
+	TIMER->COUNT16.CTRLA.bit.ENABLE = 1;
+	while(TIMER->COUNT16.SYNCBUSY.bit.ENABLE);
+
+        if(block) while(!(TIMER->COUNT16.STATUS.reg & TC_STATUS_STOP));
+
+ #else
 	// Enable GCLK for TC4 and COUNTER (timer counter input clock)
 	GCLK->CLKCTRL.reg = (uint16_t)(GCLK_CLKCTRL_CLKEN |
 	  GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_TC4_TC5));
@@ -190,6 +233,7 @@ void Talkie::say(const uint8_t *addr, boolean block) {
 	while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
 
 	if(block) while(!(TIMER->COUNT16.STATUS.reg & TC_STATUS_STOP));
+ #endif // end !__SAMD51__
 
 #else // AVR
 
@@ -296,8 +340,13 @@ ISR(TIMER1_COMPA_vect) {
 		} else if(energy == 0xF) {        // Stop frame; silence
 #ifdef __SAMD__
 			// Disable timer/counter
+ #if defined(__SAMD51__)
+			TIMER->COUNT16.CTRLA.bit.ENABLE = 0;
+			while(TIMER->COUNT16.SYNCBUSY.bit.ENABLE);
+ #else
 			TIMER->COUNT16.CTRLA.reg &= ~TC_CTRLA_ENABLE;
 			while(TIMER->COUNT16.STATUS.bit.SYNCBUSY);
+ #endif // end !__SAMD51__
 			nextPwm = 0x200;          // Neutral
 #else
 			TIMSK1 &= ~_BV(OCIE1A);   // Stop interrupt
