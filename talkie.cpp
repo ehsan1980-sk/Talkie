@@ -10,13 +10,22 @@
 
 #if defined(__SAMD21G18A__) || defined(__SAMD21E18A__) || defined(__SAMD21J18A__) || defined(_SAMD21_) || defined(__SAMD51__)
  #define __SAMD__
- #define TIMER       TC4
- #define IRQN        TC4_IRQn
- #define IRQ_HANDLER TC4_Handler
- #define PORTTYPE    uint32_t
+ #define PORTTYPE     uint32_t
+ #if !defined(TC4) // Trellis M4 only has 4 timer/counters (0-3)
+  #define TIMER       TC3
+  #define IRQN        TC3_IRQn
+  #define IRQ_HANDLER TC3_Handler
+  #define GCLK_ID     TC3_GCLK_ID
+ #else
+  #define TIMER       TC4
+  #define IRQN        TC4_IRQn
+  #define IRQ_HANDLER TC4_Handler
+  #define GCLK_ID     TC4_GCLK_ID
+  #define GCM_ID      GCM_TC4_TC5
+ #endif
 #else
- #define PORTTYPE    uint8_t
-//#define PIEZO      // If set, connect piezo on pins 3 & 11, is louder
+ #define PORTTYPE     uint8_t
+//#define PIEZO       // If set, connect piezo on pins 3 & 11, is louder
 #endif
 
 #define FS    8000      // Speech engine sample rate
@@ -198,13 +207,13 @@ void Talkie::say(const uint8_t *addr, bool block) {
 
  #if defined(__SAMD51__)
         // Feed TIMER off GCLK1 (already set to 48 MHz by Arduino core)
-	GCLK->PCHCTRL[TC4_GCLK_ID].bit.CHEN = 0;
-	while(GCLK->PCHCTRL[TC4_GCLK_ID].bit.CHEN); // Wait for disable
+	GCLK->PCHCTRL[GCLK_ID].bit.CHEN = 0;
+	while(GCLK->PCHCTRL[GCLK_ID].bit.CHEN); // Wait for disable
 	GCLK_PCHCTRL_Type pchctrl;
 	pchctrl.bit.GEN                = GCLK_PCHCTRL_GEN_GCLK1_Val;
 	pchctrl.bit.CHEN               = 1;
-	GCLK->PCHCTRL[TC4_GCLK_ID].reg = pchctrl.reg;
-	while(!GCLK->PCHCTRL[TC4_GCLK_ID].bit.CHEN); // Wait for enable
+	GCLK->PCHCTRL[GCLK_ID].reg = pchctrl.reg;
+	while(!GCLK->PCHCTRL[GCLK_ID].bit.CHEN); // Wait for enable
 
 	// Disable timer before configuring it
 	TIMER->COUNT16.CTRLA.bit.ENABLE = 0;
@@ -239,9 +248,9 @@ void Talkie::say(const uint8_t *addr, bool block) {
         if(block) while(!(TIMER->COUNT16.STATUS.reg & TC_STATUS_STOP));
 
  #else
-	// Enable GCLK for TC4 and COUNTER (timer counter input clock)
+	// Enable GCLK for timer/counter
 	GCLK->CLKCTRL.reg = (uint16_t)(GCLK_CLKCTRL_CLKEN |
-	  GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_TC4_TC5));
+	  GCLK_CLKCTRL_GEN_GCLK0 | GCLK_CLKCTRL_ID(GCM_ID));
 	while(GCLK->STATUS.bit.SYNCBUSY == 1);
 
 	// Counter must first be disabled to configure it
