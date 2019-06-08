@@ -379,7 +379,7 @@ ISR(TIMER1_COMPA_vect) {
 	} else {
 #ifdef __SAMD__
 		analogWrite(A0, nextPwm);
- #if defined(A1)
+ #if defined(PIN_A1)
 		analogWrite(A1, nextPwm);
  #endif
 #elif defined(__AVR_ATmega32U4__) // Circuit Playground
