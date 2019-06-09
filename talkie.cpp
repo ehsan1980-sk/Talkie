@@ -378,9 +378,9 @@ ISR(TIMER1_COMPA_vect) {
 		dacOut(nextPwm);
 	} else {
 #ifdef __SAMD__
-		analogWrite(A0, nextPwm);
- #if defined(PIN_A1)
-		analogWrite(A1, nextPwm);
+		analogWrite(PIN_DAC0, nextPwm);
+ #if defined(PIN_DAC1)
+		analogWrite(PIN_DAC1, nextPwm);
  #endif
 #elif defined(__AVR_ATmega32U4__) // Circuit Playground
 		OCR4A = nextPwm;
